@@ -8,7 +8,7 @@ module Ancestry
     # Update descendants with new ancestry (before save)
     def update_descendants_with_new_ancestry
       # If enabled and node is existing and ancestry was updated and the new ancestry is sane ...
-      if !ancestry_callbacks_disabled? && !new_record? && ancestry_changed? && sane_ancestry?
+      if !ancestry_callbacks_disabled? && !new_record? && ancestry_changed? && sane_ancestor_ids?
         # ... for each descendant ...
         unscoped_descendants.each do |descendant|
           # ... replace old ancestry with new ancestry
@@ -62,7 +62,7 @@ module Ancestry
 
     # Counter Cache
     def increase_parent_counter_cache
-      self.class.increment_counter _counter_cache_column, parent_id
+      self.ancestry_base_class.increment_counter _counter_cache_column, parent_id
     end
 
     def decrease_parent_counter_cache
@@ -74,7 +74,7 @@ module Ancestry
       return if defined?(@_trigger_destroy_callback) && !@_trigger_destroy_callback
       return if ancestry_callbacks_disabled?
 
-      self.class.decrement_counter _counter_cache_column, parent_id
+      self.ancestry_base_class.decrement_counter _counter_cache_column, parent_id
     end
 
     def update_parent_counter_cache
@@ -83,10 +83,10 @@ module Ancestry
       return unless changed
 
       if parent_id_was = parent_id_before_last_save
-        self.class.decrement_counter _counter_cache_column, parent_id_was
+        self.ancestry_base_class.decrement_counter _counter_cache_column, parent_id_was
       end
 
-      parent_id && self.class.increment_counter(_counter_cache_column, parent_id)
+      parent_id && self.ancestry_base_class.increment_counter(_counter_cache_column, parent_id)
     end
 
     def _counter_cache_column
@@ -108,7 +108,20 @@ module Ancestry
     end
 
     def sane_ancestor_ids?
-      valid? || errors[self.ancestry_base_class.ancestry_column].blank?
+      current_context, self.validation_context = validation_context, nil
+      errors.clear
+
+      attribute = ancestry_base_class.ancestry_column
+      ancestry_value = send(attribute)
+      return true unless ancestry_value
+
+      self.class.validators_on(attribute).each do |validator|
+        validator.validate_each(self, attribute, ancestry_value)
+      end
+      ancestry_exclude_self
+      errors.none?
+    ensure
+      self.validation_context = current_context
     end
 
     def ancestors depth_options = {}
